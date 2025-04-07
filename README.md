@@ -1,6 +1,6 @@
 # 三层神经网络实现的 CIFAR-10 图像分类器
 本项目基于 NumPy 手工实现了一个三层神经网络，用于在 CIFAR-10 数据集上完成图像分类任务。不依赖 PyTorch / TensorFlow 等自动微分框架。
-
+模型权重下载地址：https://pan.baidu.com/s/1UhLgHyFwjUsqxrpv5gvHiw?pwd=i46g
 ## 🚀 使用方法
 ### 1️⃣ 安装依赖
 本项目依赖仅为标准库与 numpy、matplotlib、pandas：
