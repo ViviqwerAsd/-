@@ -1,107 +1,89 @@
 import os
 import pickle
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 from tqdm import tqdm
 
-DEFAULT_DATA_DIR = Path(__file__).parent / "data"
-CIFAR_MEAN = np.array([0.4914, 0.4822, 0.4465]).reshape(1, 3, 1, 1)
-CIFAR_STD = np.array([0.2023, 0.1994, 0.2010]).reshape(1, 3, 1, 1)
+# 默认数据路径
+_CIFAR_DIR = Path(__file__).parent / "data"
 
-def load_cifar_batches(
-    batch_names: List[str], 
-    data_dir: Path = DEFAULT_DATA_DIR
-) -> Tuple[np.ndarray, np.ndarray]:
-    """加载CIFAR-10批次数据
-    
-    Args:
-        batch_names: 数据批次文件名列表 (e.g. ['data_batch_1', ...])
-        data_dir: 数据存储目录路径
-        
-    Returns:
-        X: 图像数据 (N, 3072)
-        y: 标签数据 (N,)
-        
-    Raises:
-        FileNotFoundError: 当数据文件不存在时
+# 均值与标准差 (按通道统计，形状为 (1, 3, 1, 1) 便于广播)
+_MEAN = np.array([0.4914, 0.4822, 0.4465], dtype=np.float32).reshape(1, 3, 1, 1)
+_STD = np.array([0.2023, 0.1994, 0.2010], dtype=np.float32).reshape(1, 3, 1, 1)
+
+
+def _load_batches(file_list: List[str], root: Path = _CIFAR_DIR) -> Tuple[np.ndarray, np.ndarray]:
     """
-    if not data_dir.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+    从磁盘加载多个 CIFAR 批次文件
 
-    X_list, y_list = [], []
-    for batch_name in tqdm(batch_names, desc="Loading batches"):
-        batch_path = data_dir / batch_name
-        if not batch_path.exists():
-            raise FileNotFoundError(f"CIFAR batch not found: {batch_path}")
-            
-        with batch_path.open('rb') as f:
-            batch = pickle.load(f, encoding='bytes')
-            
-        X_list.append(batch[b'data'].astype(np.float32))
-        y_list.append(np.array(batch[b'labels'], dtype=np.int64))
-
-    return np.concatenate(X_list), np.concatenate(y_list)
-
-def preprocess_cifar(
-    X: np.ndarray,
-    y: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray]:
-    """数据预处理流水线
-    
     Args:
-        X: 原始图像数据 (N, 3072)
-        y: 原始标签数据 (N,)
-        
+        file_list: 批次文件名列表（如 ["data_batch_1", ..., "data_batch_5"]）
+        root: 数据根目录
+
     Returns:
-        预处理后的数据:
-        - X: 归一化后的图像数据 (N, 3072)
-        - y: 标签数据 (N,)
+        images: (N, 3072) 的图像数据
+        labels: (N,) 的整型标签
     """
-    # 数据标准化 (逐通道)
-    X = X.reshape(-1, 3, 32, 32)  # 转换为NCHW格式
-    X = (X / 255.0 - CIFAR_MEAN) / CIFAR_STD
-    X = X.reshape(-1, 3072)  # 恢复为展平格式
+    if not root.exists():
+        raise FileNotFoundError(f"Cannot locate CIFAR data directory: {root}")
 
-    return X, y
+    images, labels = [], []
+    for fname in tqdm(file_list, desc="Reading CIFAR batches"):
+        fpath = root / fname
+        if not fpath.exists():
+            raise FileNotFoundError(f"Missing file: {fpath}")
 
-def load_dataset(
-    train_batch_names: List[str],
-    test_batch_name: str = "test_batch",
-    data_dir: Path = DEFAULT_DATA_DIR
+        with open(fpath, "rb") as f:
+            entry = pickle.load(f, encoding="bytes")
+
+        images.append(entry[b"data"].astype(np.float32))
+        labels.append(np.array(entry[b"labels"], dtype=np.int64))
+
+    return np.vstack(images), np.concatenate(labels)
+
+
+def _normalize_cifar(X: np.ndarray) -> np.ndarray:
+    """
+    图像数据标准化（按通道）
+
+    Args:
+        X: 输入图像数据 (N, 3072)
+
+    Returns:
+        标准化图像 (N, 3072)
+    """
+    X = X.reshape(-1, 3, 32, 32)  # 变为 NCHW 格式
+    X = (X / 255.0 - _MEAN) / _STD
+    return X.reshape(-1, 3072)
+
+
+def cifar10_dataset(
+    train_files: List[str],
+    test_file: str = "test_batch",
+    root: Path = _CIFAR_DIR
 ) -> Dict[str, np.ndarray]:
-    """完整数据加载流程
-    
-    Args:
-        train_batch_names: 训练批次文件名列表 (e.g. ['data_batch_1', ..., 'data_batch_5'])
-        test_batch_name: 测试批次文件名，默认为'test_batch'
-        data_dir: 数据存储目录路径
-        
-    Returns:
-        包含预处理后的训练集和测试集的字典:
-        {
-            'train_X': 训练集数据 (N_train, 3072),
-            'train_y': 训练集标签 (N_train,),
-            'test_X': 测试集数据 (N_test, 3072),
-            'test_y': 测试集标签 (N_test,)
-        }
     """
-    # 加载训练集
-    train_X, train_y = load_cifar_batches(train_batch_names, data_dir)
-    print(f"成功加载训练集: 总样本数={len(train_X):,}, 类别数={len(np.unique(train_y))}")
-    
-    # 加载测试集
-    test_X, test_y = load_cifar_batches([test_batch_name], data_dir)
-    print(f"成功加载测试集: 总样本数={len(test_X):,}, 类别数={len(np.unique(test_y))}")
-    
-    # 数据预处理
-    train_X, train_y = preprocess_cifar(train_X, train_y)
-    test_X, test_y = preprocess_cifar(test_X, test_y)
-    
+    加载并预处理 CIFAR-10 数据集
+
+    Args:
+        train_files: 训练批次文件列表
+        test_file: 测试集文件名，默认 "test_batch"
+        root: 数据文件存放目录
+
+    Returns:
+        包含标准化训练集和测试集的字典
+    """
+    X_train, y_train = _load_batches(train_files, root)
+    X_test, y_test = _load_batches([test_file], root)
+
+    print(f"[INFO] Training samples: {X_train.shape[0]}, Classes: {len(np.unique(y_train))}")
+    print(f"[INFO] Test samples: {X_test.shape[0]}, Classes: {len(np.unique(y_test))}")
+
     return {
-        'train_X': train_X,
-        'train_y': train_y,
-        'test_X': test_X,
-        'test_y': test_y
+        "train_X": _normalize_cifar(X_train),
+        "train_y": y_train,
+        "test_X": _normalize_cifar(X_test),
+        "test_y": y_test
     }
